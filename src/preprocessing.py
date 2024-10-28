@@ -10,9 +10,9 @@ transform = transforms.Compose([
 ])
 
 # Load datasets
-train_dataset = datasets.ImageFolder(root="dataset/train", transform=transform)
-eval_dataset = datasets.ImageFolder(root="dataset/eval", transform=transform)
-test_dataset = datasets.ImageFolder(root="dataset/test", transform=transform)
+train_dataset = datasets.ImageFolder(root="../../split_data/Train", transform=transform)
+eval_dataset = datasets.ImageFolder(root="../../split_data/Evaluate", transform=transform)
+test_dataset = datasets.ImageFolder(root="../../split_data/Test", transform=transform)
 
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 eval_loader = DataLoader(eval_dataset, batch_size=32, shuffle=True)
