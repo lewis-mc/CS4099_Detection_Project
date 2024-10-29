@@ -15,7 +15,7 @@ eval_dataset = datasets.ImageFolder(root="../../split_data/Evaluate", transform=
 test_dataset = datasets.ImageFolder(root="../../split_data/Test", transform=transform)
 
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-eval_loader = DataLoader(eval_dataset, batch_size=32, shuffle=True)
+eval_loader = DataLoader(eval_dataset, batch_size=1, shuffle=False)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=True)
 
 
