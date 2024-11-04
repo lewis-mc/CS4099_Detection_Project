@@ -1,56 +1,94 @@
 import torch
-import torch.optim as optim
 import torch.nn as nn
-from preprocessing import train_dataset, train_loader
-from cnn import SimpleCNN
-from densenet import densenet121
-
-# Check for GPU and set the device
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-print("CUDA is available: {}".format(torch.cuda.is_available()))
-if torch.cuda.is_available():
-    print("Using GPU:", torch.cuda.get_device_name(0))
-else:
-    print("Using CPU")
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
+from densenet2 import initialize_densenet
+from collections import defaultdict
+from PIL import Image
+import os
 
 
-# Initialize model, loss function, and optimizer
-num_classes = len(train_dataset.classes)  # Ensure num_classes matches your dataset
-model = densenet121(num_classes=num_classes).to(device)
-criterion = nn.CrossEntropyLoss().to(device)
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+def main():
+    # Configuration
+    train_dir = '../../split_data/Train'
+    eval_dir = '../../split_data/Evaluate'
+    num_classes = 21 
+    num_epochs = 1
+    batch_size = 64  
+    learning_rate = 0.001
+    num_workers = 4 
 
-# Training loop with progress updates
-num_epochs = 5
-for epoch in range(num_epochs):
+    # Data preparation
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    # Custom Dataset class to handle corrupted images
+    class SafeImageFolder(datasets.ImageFolder):
+        def __getitem__(self, index):
+            try:
+                return super(SafeImageFolder, self).__getitem__(index)
+            except (OSError, ValueError) as e:
+                print(f"Warning: Skipping corrupted image at index {index}: {e}")
+                return None
+
+    train_dataset = SafeImageFolder(root=train_dir, transform=transform)
+    eval_dataset = SafeImageFolder(root=eval_dir, transform=transform)
+
+    # Filter out None items resulting from corrupted images
+    train_dataset.samples = [s for s in train_dataset.samples if os.path.exists(s[0])]
+    eval_dataset.samples = [s for s in eval_dataset.samples if os.path.exists(s[0])]
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    eval_loader = DataLoader(eval_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+
+    # Initialize the model
+    model = initialize_densenet(num_classes=num_classes)
+
+    # Loss function and optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Enable mixed precision training for faster computation
+    scaler = torch.cuda.amp.GradScaler('cuda')
+
+    # Training loop
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     model.train()
-    running_loss = 0.0
-    
-    for batch_idx, (inputs, labels) in enumerate(train_loader):
-        # Move inputs and labels to the selected device
-        inputs, labels = inputs.to(device), labels.to(device)
-        
-        # Zero the parameter gradients
-        optimizer.zero_grad()
-        
-        # Forward pass
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        
-        # Backward pass and optimize
-        loss.backward()
-        optimizer.step()
-        
-        # Accumulate loss
-        running_loss += loss.item()
-        
-        # Print progress every 100 batches
-        if batch_idx % 100 == 0:
-            print(f"Epoch [{epoch + 1}/{num_epochs}], Batch [{batch_idx + 1}/{len(train_loader)}], Loss: {loss.item():.4f}")
-    
-    # Print average loss per epoch
-    print(f"Epoch {epoch + 1} completed. Average Loss: {running_loss / len(train_loader):.4f}")
+    for epoch in range(num_epochs):
+        running_loss = 0.0
+        for batch_idx, data in enumerate(train_loader):
+            if data is None:
+                continue
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
 
-# Optionally save model checkpoint after training
-torch.save(model.state_dict(), "densenet121_trained.pth")
+            # Zero the parameter gradients
+            optimizer.zero_grad()
+
+            # Forward pass with mixed precision
+            with torch.cuda.amp.autocast():
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+            # Backward pass and optimize
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            # Print statistics
+            running_loss += loss.item()
+            if (batch_idx + 1) % 10 == 0:
+                print(f'Epoch [{epoch + 1}/{num_epochs}], Step [{batch_idx + 1}/{len(train_loader)}], Loss: {running_loss / 10:.4f}')
+                running_loss = 0.0
+
+    # Save the trained model
+    torch.save(model.state_dict(), 'densenet_model.pth')
+
+if __name__ == '__main__':
+    main()
 
